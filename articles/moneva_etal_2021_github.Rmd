@@ -1,0 +1,1488 @@
+---
+title: "Analyses for 'Repeat victimization by website defacement: An empirical test of premises from an environmental criminology perspective'"
+author: "Asier Moneva"
+date: "21-10-2019 - 19-01-21"
+output: html_document
+---
+
+## Load packages
+
+```{r message = FALSE}
+library(tidyverse)
+library(scales)
+library(cowplot)
+library(haven)
+library(lubridate)
+```
+
+
+## Load data
+
+```{r eval = TRUE}
+dataset <- read_sav("path")
+```
+
+
+## Inspect data
+
+```{r eval = FALSE}
+# Dataset
+head(dataset)
+names(dataset)
+
+# Check for variables' missing values and count categories
+
+## 1 add_date
+table(is.na(dataset$add_date))      
+enframe(unique(dataset$add_date))
+
+## 2 accept_date
+table(is.na(dataset$accept_date))   
+enframe(unique(dataset$accept_date))
+
+## 3 domain
+table(is.na(dataset$domain))   
+enframe(unique(dataset$domain))
+
+## 4 system
+table(is.na(dataset$system))        
+enframe(table(dataset$system))
+
+## 5 web_server
+table(is.na(dataset$web_server))    
+enframe(table(dataset$web_server))
+
+## 6 reason
+table(is.na(dataset$reason))        
+enframe(table(dataset$reason))
+prop.table(table(dataset$reason))
+
+## 7 hackmode
+table(is.na(dataset$hackmode))      
+enframe(table(dataset$hackmode))
+
+## 8 type
+table(is.na(dataset$type))          
+enframe(table(dataset$type))
+prop.table(table(dataset$type))
+
+## 9 redefacement
+table(is.na(dataset$redefacement))  
+enframe(table(dataset$redefacement))
+prop.table(table(dataset$redefacement))
+
+## 10 state
+table(is.na(dataset$state))         
+enframe(table(dataset$state))
+
+## 11 def_grade
+table(is.na(dataset$def_grade))     
+enframe(table(dataset$def_grade))
+
+## 12 defacement_id
+table(is.na(dataset$defacement_id)) 
+enframe(unique(dataset$defacement_id))
+
+## 13 location
+table(is.na(dataset$location))      
+enframe(table(dataset$location))
+
+## 14 attacker_num
+table(is.na(dataset$attacker_num))  
+enframe(unique(dataset$attacker_num))
+```
+
+
+## Clean data
+
+```{r}
+# Remove the rows incorrectly coded by filtering them
+# We removed 82 rows because they had the value `domain` in the `domain` field due to a bad registration.
+dataset <- dataset %>% 
+  filter(
+    domain != "domain",
+    type == "regular" | type == "mass"
+  )
+
+# Keep only the variables that are needed for the analyses
+dataset <- dataset %>% 
+  select(
+    add_date,
+    domain,
+    reason,
+    type,
+    redefacement,
+    # defacement_id,
+    attacker_num
+  )
+
+# Remove excess information from domains and add clean domains as a new variable
+dataset <- dataset %>% 
+  mutate(domain_clean = str_remove_all(
+    string = dataset$domain,
+    pattern = "http://|http://www\\.|https://|https://www\\.|/[:graph:]*"
+  )
+  ) %>% 
+  select(- domain)
+```
+
+
+## General analysis
+
+```{r, eval = FALSE}
+# Determine the percentage of defacements that are repeat according to zone-h
+100 - ((table(dataset$redefacement == "yes")[1] / nrow(dataset)) * 100)
+
+# Determine the percentage of repeat defacements based on observed repeat URLs
+100 - ((nrow(enframe(unique(dataset$domain))) / nrow(dataset)) * 100)
+
+# Determine the percentage of repeat defacements based on observed repeat domains
+100 - ((nrow(enframe(unique(dataset$domain_clean))) / nrow(dataset)) * 100)
+```
+
+
+### Premise 2
+
+*A repeat incident occurs shortly after a first defacement event*.
+
+```{r}
+# Obtain the distribution of defacement victimisations in unique domains
+distr_rv_domain <- enframe(table(dataset$domain_clean))
+distr_rv_domain <- distr_rv_domain %>% 
+  rename("domain_clean" = name)
+distr_rv_domain$value <- as.numeric(as.character(distr_rv_domain$value))
+
+# Merge the datasets to assign the number of victimizations to each domain
+# Keep in mind that some domains may appear more than once in the data. This is indicated by their value
+dataset <- full_join(
+  x = dataset,
+  y = distr_rv_domain,
+  by = "domain_clean"
+)
+rm(distr_rv_domain)
+
+# Assign an index to each unique domain
+group_id <- enframe(dataset %>%
+                      group_by(domain_clean) %>% 
+                      group_indices(rv_id)
+) %>% 
+  rename("group_id" = value)
+dataset <- bind_cols(
+  dataset,
+  group_id
+) %>% 
+  select(- name)
+rm(group_id)
+
+# Assign a RV sequential number to each incident
+dataset <- dataset %>% 
+  group_by(domain_clean) %>% 
+  mutate("incident" = seq_along(group_id))
+
+# Reestructure the data and add new variables for time spans between RV
+dataset_rv_time <- dataset %>% 
+  filter(value > 1) %>% 
+  select(
+    add_date, 
+    domain_clean, 
+    incident
+  ) 
+dataset_rv_time <- dataset_rv_time %>% 
+  pivot_wider(
+    names_from = incident,
+    values_from = add_date,
+  ) 
+dataset_rv_time <- dataset_rv_time %>% 
+  rename(
+    "one" = "1",
+    "two" = "2",
+    "three" = "3",
+    "four" = "4",
+    "five" = "5",
+    "six" = "6",
+    "seven" = "7",
+    "eight" = "8"
+  ) %>%
+  # Calculate repeat defacement intervals
+  mutate(
+    "interval_1" = (two - one) / 86400,
+    "interval_2" = (three - two) / 86400,
+    "interval_3" = (four - three) / 86400,
+    "interval_4" = (five - four) / 86400,
+    "interval_5" = (six - five) / 86400,
+    "interval_6" = (seven - six) / 86400,
+    "interval_7" = (eight - seven) / 86400,
+    # Calculate intervals with respect to the first year
+    "interval_1_2" = (three - one) / 86400,
+    "interval_1_3" = (four - one) / 86400,
+    "interval_1_4" = (five - one) / 86400,
+    "interval_1_5" = (six - one) / 86400,
+    "interval_1_6" = (seven - one) / 86400,
+    "interval_1_7" = (eight - one) /86400
+  )
+
+# Calculate the time interval between defacements
+# Interval 1
+summary(as.numeric(dataset_rv_time$interval_1))
+sd(na.omit(as.numeric(dataset_rv_time$interval_1)))
+(table(is.na(dataset_rv_time$interval_1))[1] / nrow(dataset)) * 100 # Denominator is the number of distinct domains
+
+# Interval 2
+summary(as.numeric(dataset_rv_time$interval_2))
+sd(na.omit(as.numeric(dataset_rv_time$interval_2)))
+(table(is.na(dataset_rv_time$interval_2))[1] / nrow(dataset)) * 100
+
+# Interval 3
+summary(as.numeric(dataset_rv_time$interval_3))
+sd(na.omit(as.numeric(dataset_rv_time$interval_3)))
+(table(is.na(dataset_rv_time$interval_3))[1] / nrow(dataset)) * 100
+
+# Interval 4
+summary(as.numeric(dataset_rv_time$interval_4))
+sd(na.omit(as.numeric(dataset_rv_time$interval_4)))
+(table(is.na(dataset_rv_time$interval_4))[1] / nrow(dataset)) * 100
+
+# Interval 5
+summary(as.numeric(dataset_rv_time$interval_5))
+sd(na.omit(as.numeric(dataset_rv_time$interval_5)))
+(table(is.na(dataset_rv_time$interval_5))[1] / nrow(dataset)) * 100
+
+# Interval 6
+summary(as.numeric(dataset_rv_time$interval_6))
+sd(na.omit(as.numeric(dataset_rv_time$interval_6)))
+(table(is.na(dataset_rv_time$interval_6))[1] / nrow(dataset)) * 100
+
+# Interval 7
+summary(as.numeric(dataset_rv_time$interval_7))
+sd(na.omit(as.numeric(dataset_rv_time$interval_7)))
+(table(is.na(dataset_rv_time$interval_7))[1] / nrow(dataset)) * 100
+
+# Check for redefacement variable inconsistencies
+dataset %>% 
+  select(
+    domain_clean, 
+    incident, 
+    redefacement
+  ) %>% 
+  filter(incident == 1 & redefacement == "yes") 
+```
+
+
+#### Figure
+
+```{r}
+# Plot the distribution of RV intervals
+fig_h1 <- dataset_rv_time %>% 
+  select(
+    domain_clean,
+    interval_1,
+    interval_1_2,
+    interval_1_3,
+    interval_1_4,
+    interval_1_5,
+    interval_1_6,
+    interval_1_7
+  ) %>% 
+  ggplot() +
+  # Add an histogram for each yearly interval
+  geom_histogram(
+    mapping = aes(x = interval_1),
+    binwidth = 7,
+    alpha = 0.25
+  ) +
+  geom_histogram(
+    mapping = aes(x = interval_1_2),
+    binwidth = 7,
+    alpha = 0.25
+  ) +
+  geom_histogram(
+    mapping = aes(x = interval_1_3),
+    binwidth = 7,
+    alpha = 0.25
+  ) +
+  geom_histogram(
+    mapping = aes(x = interval_1_4),
+    binwidth = 7,
+    alpha = 0.25
+  ) +
+  geom_histogram(
+    mapping = aes(x = interval_1_5),
+    binwidth = 7,
+    alpha = 0.25
+  ) +
+  geom_histogram(
+    mapping = aes(x = interval_1_6),
+    binwidth = 7,
+    alpha = 0.25
+  ) +
+  geom_histogram(
+    mapping = aes(x = interval_1_7),
+    binwidth = 7,
+    alpha = 0.25
+  ) +
+  # Indicate time lapses for every year
+  geom_vline(
+    xintercept = 365,
+    color = "black",
+    linetype = 2, 
+    size = 0.5
+  ) +
+  geom_vline(
+    xintercept = 365 * 2,
+    color = "black",
+    linetype = 2, 
+    size = 0.5
+  ) +
+  geom_vline(
+    xintercept = 365 * 3,
+    color = "black",
+    linetype = 2, 
+    size = 0.5
+  ) +
+  geom_vline(
+    xintercept = 365 * 4,
+    color = "black",
+    linetype = 2, 
+    size = 0.5
+  ) +
+  geom_vline(
+    xintercept = 365 * 5,
+    color = "black",
+    linetype = 2, 
+    size = 0.5
+  ) +
+  geom_vline(
+    xintercept = 365 * 6,
+    color = "black",
+    linetype = 2, 
+    size = 0.5
+  ) +
+  geom_vline(
+    xintercept = 365 * 7,
+    color = "black",
+    linetype = 2, 
+    size = 0.5
+  ) +
+  # Annotate year milestones
+  annotate(
+    geom = "text",
+    label = "1 year",
+    x = 365 - 65,
+    y = 22000,
+    color = "black",
+    angle = 90
+  ) +
+  annotate(
+    geom = "text",
+    label = "2 years",
+    x = (365 * 2) - 65,
+    y = 22000,
+    color = "black",
+    angle = 90
+  ) +
+  annotate(
+    geom = "text",
+    label = "3 years",
+    x = (365 * 3) - 65,
+    y = 22000,
+    color = "black",
+    angle = 90
+  ) +
+  annotate(
+    geom = "text",
+    label = "4 years",
+    x = (365 * 4) - 65,
+    y = 22000,
+    color = "black",
+    angle = 90
+  ) +
+  annotate(
+    geom = "text",
+    label = "5 years",
+    x = (365 * 5) - 65,
+    y = 22000,
+    color = "black",
+    angle = 90
+  ) +
+  annotate(
+    geom = "text",
+    label = "6 years",
+    x = (365 * 6) - 65,
+    y = 22000,
+    color = "black",
+    angle = 90
+  ) +
+  annotate(
+    geom = "text",
+    label = "7 years",
+    x = (365 * 7) - 65,
+    y = 22000,
+    color = "black",
+    angle = 90
+  ) +
+  # Annotate repeat victimisations
+  annotate(
+    geom = "text",
+    label = "1st repeat\nvictimisation",
+    x = (365 + (365 * 2)) / 2,
+    y = 2000,
+    color = "black",
+    size = 3
+  ) +
+  annotate(
+    geom = "text",
+    label = "2nd repeat\nvictimisation",
+    x = ((365 * 2) + (365 * 3)) / 2,
+    y = 2000,
+    color = "black",
+    size = 3
+  ) +  
+  annotate(
+    geom = "text",
+    label = "3rd repeat\nvictimisation",
+    x = ((365 * 3) + (365 * 4)) / 2,
+    y = 2000,
+    color = "black",
+    size = 3
+  ) +  
+  annotate(
+    geom = "text",
+    label = "4th repeat\nvictimisation",
+    x = ((365 * 4) + (365 * 5)) / 2,
+    y = 2000,
+    color = "black",
+    size = 3
+  ) +  
+  scale_x_continuous(breaks = seq(
+    from = 0,
+    to = 2800,
+    by = 200
+  )
+  ) +
+  # Annotations contain the code to display a logged scale
+  scale_y_continuous(
+    # trans = "log10",
+    labels = label_comma(accuracy = 1),
+    breaks = seq(
+      from = 0,
+      to = 25000,
+      by = 5000
+    )
+  ) +
+  # annotation_logticks(sides = "l") +
+  labs(
+    # y = expression(paste("logged"~(log[10])~"defacements")),
+    y = "number of defacements",
+    x = "days interval between repeat defacements"
+  ) +
+  theme_classic()
+print(fig_h1)
+```
+
+```{r, eval = FALSE, warning = FALSE}
+# Print figures
+print(fig_h1_reg)
+print(fig_h1_mas)
+
+# Create a fiure matrix
+fig_h3 <- plot_grid(
+  fig_h1_reg,
+  fig_h1_mas,
+  labels = c("A", "B"),
+  vjust = 4,
+  nrow = 2
+)
+print(fig_h3)
+```
+
+
+### Premise 1
+
+*A substantial share of all defacements and variation in defacements is due to repeat victimization*.
+
+```{r}
+# Calculate the average percentage that RV represents vs total defacements
+
+# Select repeatedly victimised domains
+# Note that domains are over-represented by repeats, unique domains are less
+# dataset_rv_ <- dataset %>% 
+#   select(
+#     defacement_id,
+#     attacker_num,
+#     add_date, 
+#     domain_clean,
+#     type,  
+#     value,
+#     incident
+#   ) %>% 
+#   filter(incident > 1)
+
+# Total defacements per year
+tot_year <- dataset %>% 
+  group_by(year(add_date)) %>% 
+  count() %>% 
+  rename(year = "year(add_date)") # %>% 
+# filter(year > 2010 & year < 2017)
+
+# Repeat incidents per year
+rep_year <- dataset %>% 
+  filter(incident > 1) %>% 
+  group_by(year(add_date)) %>% 
+  count() %>% 
+  rename(year = "year(add_date)") # %>% 
+# filter(year > 2010 & year < 2017)
+
+# Descriptive statistics
+summary(rep_year$n / tot_year$n) * 100
+sd(rep_year$n / tot_year$n) * 100
+
+# Total defacements per month and year
+tot <- dataset %>% 
+  select(add_date) %>% 
+  mutate(
+    month = month(add_date),
+    year = year(add_date)
+  ) %>% 
+  group_by(
+    month,
+    year
+  ) %>% 
+  count()
+
+tot_ <-  tot %>% 
+  filter(year > 2010 & year < 2017)
+
+
+# Repeat incidents per month and year
+rep <- dataset_rv_ %>% 
+  select(add_date) %>% 
+  mutate(
+    month = month(add_date),
+    year = year(add_date)
+  ) %>% 
+  group_by(
+    month,
+    year
+  ) %>% 
+  count()
+
+rep_ <- rep %>% 
+  filter(year > 2010 & year < 2017)
+
+# Pearson's correlation
+cor.test(
+  x = tot_$n,
+  y = rep_$n,
+  method = "pearson"
+)
+
+# Correlation plot
+qplot(
+  x = tot_$n,
+  y = rep_$n,
+  geom = c("point", "smooth"),
+  alpha = 1 / 4
+)
+```
+
+
+#### Figure
+
+```{r}
+# Plot repeat defacements with respect to total
+fig_h2 <- dataset %>% 
+  select(
+    add_date,
+    incident
+  )  
+fig_h2 <- ggplot(
+  data = fig_h2,
+  mapping = aes(x = add_date)
+) +
+  geom_histogram(
+    alpha = 1 / 3,
+    # bins = 26
+  ) +
+  geom_histogram(
+    data = filter(
+      fig_h2, 
+      incident > 1
+    ),
+    mapping = aes(x = add_date),
+    alpha = 2 / 3,
+    # bins = 26
+  ) +
+  annotate(
+    geom = "text",
+    label = "repeat defacements",
+    x = as.POSIXct("2012-06-01"),
+    y = 80000,
+    color = "black",
+  ) +
+  annotate(
+    geom = "curve",
+    x = as.POSIXct("2013-04-01"),
+    y = 80000,
+    xend = as.POSIXct("2013-10-01"),
+    yend = 20000,
+    curvature = - 0.25,
+    arrow = arrow(length = unit(
+      x = 0.25,
+      units = "cm"
+    )
+    )
+  ) +
+  annotate(
+    geom = "text",
+    label = "unique defacements",
+    x = as.POSIXct("2015-02-01"),
+    y = 360000,
+    # y = 1000000,
+    color = "black"
+  ) +
+  annotate(
+    geom = "curve",
+    x = as.POSIXct("2014-04-01"),
+    y = 360000,
+    # y = 1000000,
+    xend = as.POSIXct("2013-10-01"),
+    yend = 300000,
+    curvature = 0.25,
+    arrow = arrow(length = unit(
+      x = 0.25,
+      units = "cm"
+    )
+    )
+  ) +
+  scale_x_datetime(
+    breaks = "1 year",
+    labels = date_format("%Y"),
+    # limits = c(as.POSIXct("2011-01-01"), as.POSIXct("2016-12-31"))
+  ) +
+  # Annotations contain the code to display a logged scale
+  scale_y_continuous(
+    # trans = "log10",
+    labels = label_comma(accuracy = 1),
+  ) +
+  # annotation_logticks(sides = "l") +
+  labs(
+    # y = expression(paste("logged"~(log[10])~"defacements")),
+    y = "number of defacements",
+    x = "year"
+  ) +
+  theme_classic()
+print(fig_h2)
+# rm(fig_h2)
+```
+
+
+### Premise 3
+
+*Repeat defacements are disproportionately the work of prolific defacers*.
+
+```{r, eval = FALSE}
+# Obtain the number of attacks performed by each attacker
+distr_ro <- dataset %>% 
+  group_by(attacker_num) %>% 
+  summarise(count = n())
+
+# Calculate how many defacers have performed only one attack
+distr_ro %>% 
+  filter(count == 1)
+
+# Obtain the number of repeat attacks performed by each attacker
+distr_ro <- dataset %>%
+  filter(incident > 1) %>% 
+  group_by(attacker_num) %>% 
+  summarise(count = n())
+
+# Dataset containing only repeats
+dataset_rv_ <- dataset %>% 
+  filter(incident > 1)
+
+# Calculate the distribution of the attacks and its summary statistics
+summary(distr_ro$count)
+sd(distr_ro$count)
+
+# Unique attacks of which 1% prolific defacers are responsible 
+ro_1 <- (nrow(distr_ro) * 1) / 100
+ro_at_1 <- distr_ro %>% 
+  arrange(desc(count)) %>% 
+  slice(1:ro_1) %>% 
+  summarise(sum(count))
+ro_at_p1 <- ro_at_1 / nrow(dataset_rv_) * 100
+
+# Unique attacks of which 2% prolific defacers are responsible 
+ro_2 <- (nrow(distr_ro) * 2) / 100
+ro_at_2 <- distr_ro %>% 
+  arrange(desc(count)) %>% 
+  slice(1:ro_2) %>% 
+  summarise(sum(count))
+ro_at_p2 <- ro_at_2 / nrow(dataset_rv_) * 100
+
+# Unique attacks of which 5% prolific defacers are responsible 
+ro_5 <- (nrow(distr_ro) * 5) / 100
+ro_at_5 <- distr_ro %>% 
+  arrange(desc(count)) %>% 
+  slice(1:ro_5) %>% 
+  summarise(sum(count))
+ro_at_p5 <- ro_at_5 / nrow(dataset_rv_) * 100
+
+# Unique attacks of which 10% prolific defacers are responsible 
+ro_10 <- (nrow(distr_ro) * 10) / 100
+ro_at_10 <- distr_ro %>% 
+  arrange(desc(count)) %>% 
+  slice(1:ro_10) %>% 
+  summarise(sum(count))
+ro_at_p10 <- ro_at_10 / nrow(dataset_rv_) * 100
+
+# Unique attacks of which 50% prolific defacers are responsible 
+ro_50 <- (nrow(distr_ro) * 50) / 100
+ro_at_50 <- distr_ro %>% 
+  arrange(desc(count)) %>% 
+  slice(1:ro_50) %>% 
+  summarise(sum(count))
+ro_at_p50 <- ro_at_50 / nrow(dataset_rv_) * 100
+
+# Unique attacks of which 100% prolific defacers are responsible 
+ro_100 <- (nrow(distr_ro) * 100) / 100
+ro_at_100 <- distr_ro %>% 
+  arrange(desc(count)) %>% 
+  slice(1:ro_100) %>% 
+  summarise(sum(count))
+ro_at_p100 <- ro_at_100 / nrow(dataset_rv_) * 100
+
+# Compile the results in a data frame and clean the Global Environment
+n_repeat <- unlist(c(ro_at_1, ro_at_2, ro_at_5, ro_at_10, ro_at_50, ro_at_100))
+p_repeat <- unlist(c(ro_at_p1, ro_at_p2, ro_at_p5, ro_at_p10, ro_at_p50, ro_at_p100))
+np_repeat <- data.frame(
+  p_off = c(1, 2, 5, 10, 50, 100),
+  n = n_repeat,
+  p = p_repeat
+)
+rm(ro_1, ro_2, ro_5, ro_10, ro_50, ro_100, ro_at_1, ro_at_2, ro_at_5, ro_at_10, ro_at_50, ro_at_100, ro_at_p1, ro_at_p2, ro_at_p5, ro_at_p10, ro_at_p50, ro_at_p100, n_repeat, p_repeat)
+
+# Make a further disctinction depending on the offender's modus operandi
+# Mass defacement
+# Repeat mass defacements
+dataset_rv_mass <- dataset_rv_ %>% 
+  filter(type == "mass")
+# Offenders responsible
+distr_ro_mas <- dataset_rv %>%
+  filter(
+    incident > 1,
+    type == "mass"
+  ) %>% 
+  group_by(attacker_num) %>% 
+  summarise(count = n())
+
+# Unique attacks of which 1% prolific defacers are responsible
+ro_1 <- (nrow(distr_ro_mas) * 1) / 100
+ro_at_1 <- distr_ro_mas %>% 
+  arrange(desc(count)) %>% 
+  slice(1:ro_1) %>% 
+  summarise(sum(count))
+ro_at_p1 <- ro_at_1 / nrow(dataset_rv_mass) * 100
+
+# Unique attacks of which 2% prolific defacers are responsible 
+ro_2 <- (nrow(distr_ro_mas) * 2) / 100
+ro_at_2 <- distr_ro_mas %>% 
+  arrange(desc(count)) %>% 
+  slice(1:ro_2) %>% 
+  summarise(sum(count))
+ro_at_p2 <- ro_at_2 / nrow(dataset_rv_mass) * 100
+
+# Unique attacks of which 5% prolific defacers are responsible 
+ro_5 <- (nrow(distr_ro_mas) * 5) / 100
+ro_at_5 <- distr_ro_mas %>% 
+  arrange(desc(count)) %>% 
+  slice(1:ro_5) %>% 
+  summarise(sum(count))
+ro_at_p5 <- ro_at_5 / nrow(dataset_rv_mass) * 100
+
+# Unique attacks of which 10% prolific defacers are responsible 
+ro_10 <- (nrow(distr_ro_mas) * 10) / 100
+ro_at_10 <- distr_ro_mas %>% 
+  arrange(desc(count)) %>% 
+  slice(1:ro_10) %>% 
+  summarise(sum(count))
+ro_at_p10 <- ro_at_10 / nrow(dataset_rv_mass) * 100
+
+# Unique attacks of which 50% prolific defacers are responsible 
+ro_50 <- (nrow(distr_ro_mas) * 50) / 100
+ro_at_50 <- distr_ro_mas %>% 
+  arrange(desc(count)) %>% 
+  slice(1:ro_50) %>% 
+  summarise(sum(count))
+ro_at_p50 <- ro_at_50 / nrow(dataset_rv_mass) * 100
+
+# Unique attacks of which 100% prolific defacers are responsible 
+ro_100 <- (nrow(distr_ro_mas) * 100) / 100
+ro_at_100 <- distr_ro_mas %>% 
+  arrange(desc(count)) %>% 
+  slice(1:ro_100) %>% 
+  summarise(sum(count))
+ro_at_p100 <- ro_at_100 / nrow(dataset_rv_mass) * 100
+
+# Compile the results in a data frame and clean the Global Environment
+n_repeat <- unlist(c(ro_at_1, ro_at_2, ro_at_5, ro_at_10, ro_at_50, ro_at_100))
+p_repeat <- unlist(c(ro_at_p1, ro_at_p2, ro_at_p5, ro_at_p10, ro_at_p50, ro_at_p100))
+np_repeat_mas <- data.frame(
+  p_off = c(1, 2, 5, 10, 50, 100),
+  n = n_repeat,
+  p = p_repeat
+)
+rm(ro_1, ro_2, ro_5, ro_10, ro_50, ro_100, ro_at_1, ro_at_2, ro_at_5, ro_at_10, ro_at_50, ro_at_100, ro_at_p1, ro_at_p2, ro_at_p5, ro_at_p10, ro_at_p50, ro_at_p100, n_repeat, p_repeat)
+
+# Single defacement
+# Repeat single defacements
+dataset_rv_sing <- dataset_rv_ %>% 
+  filter(type == "regular")
+# Offenders responsible
+distr_ro_sin <- dataset_rv %>%
+  filter(
+    incident > 1,
+    type == "regular"
+  ) %>% 
+  group_by(attacker_num) %>% 
+  summarise(count = n())
+
+# Unique attacks of which 1% prolific defacers are responsible 
+ro_1 <- (nrow(distr_ro_sin) * 1) / 100
+ro_at_1 <- distr_ro_sin %>% 
+  arrange(desc(count)) %>% 
+  slice(1:ro_1) %>% 
+  summarise(sum(count))
+ro_at_p1 <- ro_at_1 / nrow(dataset_rv_sing) * 100
+
+# Unique attacks of which 2% prolific defacers are responsible 
+ro_2 <- (nrow(distr_ro_sin) * 2) / 100
+ro_at_2 <- distr_ro_sin %>% 
+  arrange(desc(count)) %>% 
+  slice(1:ro_2) %>% 
+  summarise(sum(count))
+ro_at_p2 <- ro_at_2 / nrow(dataset_rv_sing) * 100
+
+# Unique attacks of which 5% prolific defacers are responsible 
+ro_5 <- (nrow(distr_ro_sin) * 5) / 100
+ro_at_5 <- distr_ro_sin %>% 
+  arrange(desc(count)) %>% 
+  slice(1:ro_5) %>% 
+  summarise(sum(count))
+ro_at_p5 <- ro_at_5 / nrow(dataset_rv_sing) * 100
+
+# Unique attacks of which 10% prolific defacers are responsible 
+ro_10 <- (nrow(distr_ro_sin) * 10) / 100
+ro_at_10 <- distr_ro_sin %>% 
+  arrange(desc(count)) %>% 
+  slice(1:ro_10) %>% 
+  summarise(sum(count))
+ro_at_p10 <- ro_at_10 / nrow(dataset_rv_sing) * 100
+
+# Unique attacks of which 50% prolific defacers are responsible 
+ro_50 <- (nrow(distr_ro_sin) * 50) / 100
+ro_at_50 <- distr_ro_sin %>% 
+  arrange(desc(count)) %>% 
+  slice(1:ro_50) %>% 
+  summarise(sum(count))
+ro_at_p50 <- ro_at_50 / nrow(dataset_rv_sing) * 100
+
+# Unique attacks of which 100% prolific defacers are responsible 
+ro_100 <- (nrow(distr_ro_sin) * 100) / 100
+ro_at_100 <- distr_ro_sin %>% 
+  arrange(desc(count)) %>% 
+  slice(1:ro_100) %>% 
+  summarise(sum(count))
+ro_at_p100 <- ro_at_100 / nrow(dataset_rv_sing) * 100
+
+# Compile the results in a data frame and clean the Global Environment
+n_repeat <- unlist(c(ro_at_1, ro_at_2, ro_at_5, ro_at_10, ro_at_50, ro_at_100))
+p_repeat <- unlist(c(ro_at_p1, ro_at_p2, ro_at_p5, ro_at_p10, ro_at_p50, ro_at_p100))
+np_repeat_sin <- data.frame(
+  p_off = c(1, 2, 5, 10, 50, 100),
+  n = n_repeat,
+  p = p_repeat
+)
+rm(ro_1, ro_2, ro_5, ro_10, ro_50, ro_100, ro_at_1, ro_at_2, ro_at_5, ro_at_10, ro_at_50, ro_at_100, ro_at_p1, ro_at_p2, ro_at_p5, ro_at_p10, ro_at_p50, ro_at_p100, n_repeat, p_repeat)
+```
+
+```{r}
+# Create a dataset for the data
+# Total repeats
+fig_h3_tot <- dataset_rv_ %>%
+  group_by(attacker_num) %>% 
+  summarise(count = n()) %>% 
+  arrange(desc(count)) %>% 
+  mutate(
+    p_count = (count * 100) / nrow(dataset_rv_),
+    p_attacker_num = (1 * 100 / nrow(fig_h3_tot)),
+    c_p_count = cumsum(p_count),
+    c_p_attacker_num = cumsum(p_attacker_num),
+    type = "total"
+  ) %>% 
+  add_row(
+    c_p_attacker_num = 0,
+    p_count = 0,
+    c_p_count = 0,
+    type = "total",
+    .before = 1
+  ) 
+
+# Calculate the alpha concentration for total repeats
+a_tot <- fig_h3_tot %>% 
+  select(
+    p_attacker_num,
+    p_count,
+    c_p_count
+  ) %>% 
+  mutate(skewness = (p_attacker_num / 100) * ((p_count / 100) / 2 + lag(c_p_count / 100))) 
+a_tot <- round(
+  x = (2 * sum(na.omit(a_tot$skewness)) - 1),
+  digits = 3
+)
+
+# Mass repeats
+dataset_rv_mas <- dataset_rv_ %>% 
+  filter(type == "mass")
+fig_h3_mas <- dataset_rv_mas %>%
+  group_by(attacker_num) %>% 
+  summarise(count = n()) %>% 
+  arrange(desc(count)) %>% 
+  mutate(
+    p_count = (count * 100) / nrow(dataset_rv_mas),
+    p_attacker_num = (1 * 100 / nrow(fig_h3_mas)),
+    c_p_count = cumsum(p_count),
+    c_p_attacker_num = cumsum(p_attacker_num),
+    type = "mass"
+  ) %>% 
+  add_row(
+    c_p_attacker_num = 0,
+    p_count = 0,
+    c_p_count = 0,
+    type = "mass",
+    .before = 1
+  )
+
+# Calculate the alpha concentration for mass repeats
+a_mas <- fig_h3_mas %>% 
+  select(
+    p_attacker_num,
+    p_count,
+    c_p_count
+  ) %>% 
+  mutate(skewness = (p_attacker_num / 100) * ((p_count / 100) / 2 + lag(c_p_count / 100))) 
+a_mas <- round(
+  x = (2 * sum(na.omit(a_mas$skewness)) - 1),
+  digits = 3
+)
+
+# Single repeats
+dataset_rv_sin <- dataset_rv_ %>% 
+  filter(type == "regular")
+fig_h3_sin <- dataset_rv_sin %>%
+  group_by(attacker_num) %>% 
+  summarise(count = n()) %>% 
+  arrange(desc(count)) %>% 
+  mutate(
+    p_count = (count * 100) / nrow(dataset_rv_sin),
+    p_attacker_num = (1 * 100 / nrow(fig_h3_sin)),
+    c_p_count = cumsum(p_count),
+    c_p_attacker_num = cumsum(p_attacker_num),
+    type = "single"
+  ) %>% 
+  add_row(
+    c_p_attacker_num = 0,
+    p_count = 0,
+    c_p_count = 0,
+    type = "single",
+    .before = 1
+  )
+
+# Calculate the alpha concentration for single repeats
+a_sin <- fig_h3_sin %>% 
+  select(
+    p_attacker_num,
+    p_count,
+    c_p_count
+  ) %>% 
+  mutate(skewness = (p_attacker_num / 100) * ((p_count / 100) / 2 + lag(c_p_count / 100))) 
+a_sin <- round(
+  x = (2 * sum(na.omit(a_sin$skewness)) - 1),
+  digits = 3
+)
+```
+
+
+#### Figure
+
+```{r}
+# Join all datasets to create a dataset for plotting the results of H4
+fig_h3 <- bind_rows(
+  fig_h3_tot,
+  fig_h3_mas,
+  fig_h3_sin
+) %>% 
+  select(
+    c_p_attacker_num,
+    c_p_count,
+    type
+  ) %>% 
+  # Plot the data
+  ggplot(mapping = aes(
+    x = c_p_attacker_num,
+    y = c_p_count,
+    color = reorder(
+      as.factor(type), 
+      desc(type)
+    ),
+    linetype = reorder(
+      as.factor(type), 
+      desc(type)
+    )
+  )
+  ) +
+  geom_step(size = 1) +
+  geom_abline() +
+  scale_y_continuous(limits = c(0, 100)) +
+  scale_linetype(
+    name = "type of repeat\ndefacement",
+    labels = c(
+      expression(total~(alpha == 0.906)), 
+      expression(single~(alpha == 0.881)),
+      expression(mass~(alpha == 0.877))
+    )
+  ) +
+  scale_colour_grey(
+    name = "type of repeat\ndefacement",
+    labels = c(
+      expression(total~(alpha == 0.906)),
+      expression(single~(alpha == 0.881)),
+      expression(mass~(alpha == 0.877))
+    )
+  ) +
+  labs(
+    y = "percentage of repeat defacements",
+    x = "percentage of offenders"
+  ) +
+  theme_classic() +
+  theme(legend.position = c(0.8, 0.2))
+print(fig_h3)
+```
+
+
+### Premise 4
+
+*A major reason for repeats is that offenders repeatedly target domains they have defaced previously*.
+
+```{r}
+# Identify repeat offenders
+distr_ro_domain <- dataset %>% 
+  group_by(
+    attacker_num, 
+    domain_clean
+  ) %>% 
+  summarise(count = n())
+
+# Obtain the counts and percentages of RVs performed by the same offenders
+any_mot_3.1 <- tibble(
+  table(distr_ro_domain$count),
+  .name_repair = make.names
+)
+any_mot_p_3.1 <- round(
+  x = prop.table(table(distr_ro_domain$count)) * 100,
+  digits = 2
+)
+
+# Make a further disctinction depending on the same offender's motivation
+# Political reasons
+distr_ro_domain_pol <- dataset %>% 
+  select(
+    attacker_num,
+    reason,
+    domain_clean
+  ) %>% 
+  filter(reason == "Patriotism" | reason == "Political reasons") %>% 
+  group_by(
+    attacker_num, 
+    domain_clean
+  ) %>% 
+  summarise(count = n())
+pol_mot_3.1 <- tibble(
+  table(distr_ro_domain_pol$count),
+  .name_repair = make.names
+)
+pol_mot_p_3.1 <- round(
+  x = prop.table(table(distr_ro_domain_pol$count)) * 100,
+  digits = 2
+)
+
+# Fun
+distr_ro_domain_fun <- dataset %>% 
+  select(
+    attacker_num,
+    reason,
+    domain_clean
+  ) %>% 
+  filter(reason == "Heh...just for fun!") %>% 
+  group_by(
+    attacker_num, 
+    domain_clean
+  ) %>% 
+  summarise(count = n())
+fun_mot_3.1 <- tibble(
+  table(distr_ro_domain_fun$count),
+  .name_repair = make.names
+)
+fun_mot_p_3.1 <- round(
+  x = prop.table(table(distr_ro_domain_fun$count)) * 100,
+  digits = 2
+)
+
+# Challenge
+distr_ro_domain_cha <- dataset %>% 
+  select(
+    attacker_num,
+    reason,
+    domain_clean
+  ) %>% 
+  filter(reason == "I just want to be the best defacer" | reason == "As a challenge") %>% 
+  group_by(
+    attacker_num, 
+    domain_clean
+  ) %>% 
+  summarise(count = n())
+cha_mot_3.1 <- tibble(
+  table(distr_ro_domain_cha$count),
+  .name_repair = make.names
+)
+cha_mot_p_3.1 <- round(
+  x = prop.table(table(distr_ro_domain_cha$count)) * 100,
+  digits = 2
+)
+
+# Revenge
+distr_ro_domain_rev <- dataset %>% 
+  select(
+    attacker_num,
+    reason,
+    domain_clean
+  ) %>% 
+  filter(reason == "Revenge against that website") %>% 
+  group_by(
+    attacker_num, 
+    domain_clean
+  ) %>% 
+  summarise(count = n())
+rev_mot_3.1 <- tibble(
+  table(distr_ro_domain_rev$count),
+  .name_repair = make.names
+)
+rev_mot_p_3.1 <- round(
+  x = prop.table(table(distr_ro_domain_rev$count)) * 100,
+  digits = 2
+)
+
+# No reason
+distr_ro_domain_nor <- dataset %>% 
+  select(
+    attacker_num,
+    reason,
+    domain_clean
+  ) %>% 
+  filter(reason == "Not available") %>% 
+  group_by(
+    attacker_num, 
+    domain_clean
+  ) %>% 
+  summarise(count = n())
+nor_mot_3.1 <- tibble(
+  table(distr_ro_domain_nor$count),
+  .name_repair = make.names
+)
+nor_mot_p_3.1 <- round(
+  x = prop.table(table(distr_ro_domain_nor$count)) * 100,
+  digits = 2
+)
+
+# Obtain the counts and percentages of RVs performed by any offenders
+any_mot_3.2 <- tibble(
+  table(distr_rv_domain$value),
+  .name_repair = make.names
+)
+any_mot_p_3.2 <- round(
+  x = prop.table(table(distr_rv_domain$value)) * 100,
+  digits = 2
+)
+
+# Make a further disctinction depending on any offender's motivation
+# Political reasons
+distr_rv_domain_pol <- dataset %>% 
+  select(
+    reason,
+    domain_clean
+  ) %>% 
+  filter(reason == "Patriotism" | reason == "Political reasons") %>% 
+  group_by(domain_clean) %>% 
+  summarise(count = n())
+pol_mot_3.2 <- tibble(
+  table(distr_rv_domain_pol$count),
+  .name_repair = make.names
+)
+pol_mot_p_3.2 <- round(
+  x = prop.table(table(distr_rv_domain_pol$count)) * 100,
+  digits = 2
+)
+
+# Fun
+distr_rv_domain_fun <- dataset %>% 
+  select(
+    reason,
+    domain_clean
+  ) %>% 
+  filter(reason == "Heh...just for fun!") %>% 
+  group_by(domain_clean) %>% 
+  summarise(count = n())
+fun_mot_3.2 <- tibble(
+  table(distr_rv_domain_fun$count),
+  .name_repair = make.names
+)
+fun_mot_p_3.2 <- round(
+  x = prop.table(table(distr_rv_domain_fun$count)) * 100,
+  digits = 2
+)
+
+# Challenge
+distr_rv_domain_cha <- dataset %>% 
+  select(
+    reason,
+    domain_clean
+  ) %>% 
+  filter(reason == "I just want to be the best defacer" | reason == "As a challenge") %>% 
+  group_by(domain_clean) %>% 
+  summarise(count = n())
+cha_mot_3.2 <- tibble(
+  table(distr_rv_domain_cha$count),
+  .name_repair = make.names
+)
+cha_mot_p_3.2 <- round(
+  x = prop.table(table(distr_rv_domain_cha$count)) * 100,
+  digits = 2
+)
+
+# Revenge
+distr_rv_domain_rev <- dataset %>% 
+  select(
+    reason,
+    domain_clean
+  ) %>% 
+  filter(reason == "Revenge against that website") %>% 
+  group_by(domain_clean) %>% 
+  summarise(count = n())
+rev_mot_3.2 <- tibble(
+  table(distr_rv_domain_rev$count),
+  .name_repair = make.names
+)
+rev_mot_p_3.2 <- round(
+  x = prop.table(table(distr_rv_domain_rev$count)) * 100,
+  digits = 2
+)
+
+# No reason
+distr_rv_domain_nor <- dataset %>% 
+  select(
+    reason,
+    domain_clean
+  ) %>% 
+  filter(reason == "Not available") %>% 
+  group_by(domain_clean) %>% 
+  summarise(count = n())
+nor_mot_3.2 <- tibble(
+  table(distr_rv_domain_nor$count),
+  .name_repair = make.names
+)
+nor_mot_p_3.2 <- round(
+  x = prop.table(table(distr_rv_domain_nor$count)) * 100,
+  digits = 2
+)
+
+# Calculation
+8153380 + (397942 * 2) + (43282 * 3) + (7358 * 4) + (1478 * 5) + (192 * 6) + (24 *7) + (2 * 8)
+9052741 + (31036 * 2) + (775 * 3) + (23 * 4) + (6 * 5) + (1 * 8)
+```
+
+
+#### Figure
+
+```{r}
+# Create a dataset for plotting the results of H3.1 (same offender)
+# Ensemble the results (counts) in a data frame
+fig_h3.1_ds <- full_join(
+  rownames_to_column(any_mot_3.1),
+  rownames_to_column(fun_mot_3.1),
+  by = "rowname"
+) %>% 
+  full_join(
+    rownames_to_column(cha_mot_3.1),
+    by = "rowname"
+  ) %>% 
+  full_join(
+    rownames_to_column(pol_mot_3.1),
+    by = "rowname"
+  ) %>% 
+  full_join(
+    rownames_to_column(rev_mot_3.1),
+    by = "rowname"
+  ) %>% 
+  full_join(
+    rownames_to_column(nor_mot_3.1),
+    by = "rowname"
+  ) %>%
+  # Rename the variables
+  rename(
+    "any" = table.distr_ro_domain.count.,
+    "political" = table.distr_ro_domain_pol.count.,
+    "fun" = table.distr_ro_domain_fun.count.,
+    "challenge" = table.distr_ro_domain_cha.count.,
+    "revenge" = table.distr_ro_domain_rev.count.,
+    "unknown" = table.distr_ro_domain_nor.count.
+  ) %>% 
+  # Add a new row adding the last two rows together
+  add_row(
+    rowname = "5 +",
+    any = 7,
+    political = NA,
+    fun = 3,
+    challenge = 4,
+    revenge = NA,
+    unknown = NA
+  ) %>% 
+  # Select the relevant rows and columns for plotting
+  slice(c(1:4, 7)) %>% 
+  select(- unknown)
+
+# Homogeneise the variable types
+fig_h3.1_ds$any <- as.numeric(fig_h3.1_ds$any)
+fig_h3.1_ds$political <- as.numeric(fig_h3.1_ds$political)
+fig_h3.1_ds$fun <- as.numeric(fig_h3.1_ds$fun)
+fig_h3.1_ds$challenge <- as.numeric(fig_h3.1_ds$challenge)
+fig_h3.1_ds$revenge <- as.numeric(fig_h3.1_ds$revenge)
+
+# Rearrange the data
+fig_h3.1_ds <- fig_h3.1_ds %>% 
+  pivot_longer(
+    cols = 2:6,
+    names_to = "motive",
+    values_to = "value"
+  )
+
+# Plot the data for H3.1
+fig_h3.1 <- ggplot(
+  data = fig_h3.1_ds %>% 
+    filter(
+      motive != "any",
+      rowname != 1
+    ),
+  mapping = aes(
+    x = as.character(rowname),
+    y = value,
+    group = motive,
+    fill = motive
+  ),
+) +
+  geom_col(position = "dodge") +
+  scale_y_continuous(
+    # trans = "log10",
+    labels = comma
+  ) +
+  # annotation_logticks(sides = "l") +
+  labs(
+    # y = expression(log[10](domains)),
+    x = "times victimised by the same offender"
+  ) +
+  scale_fill_grey() +
+  theme_classic() +
+  theme(legend.position = "none")
+print(fig_h3.1)
+
+# Create a dataset for plotting the results of H3.2 (any offender)
+# Ensemble the results (counts) in a data frame
+fig_h3.2_ds <- full_join(
+  rownames_to_column(any_mot_3.2),
+  rownames_to_column(pol_mot_3.2),
+  by = "rowname"
+) %>% 
+  full_join(
+    rownames_to_column(hed_mot_3.2),
+    by = "rowname"
+  ) %>% 
+  full_join(
+    rownames_to_column(rev_mot_3.2),
+    by = "rowname"
+  ) %>% 
+  full_join(
+    rownames_to_column(nor_mot_3.2),
+    by = "rowname"
+  ) %>%
+  # Rename the variables
+  rename(
+    "any" = table.distr_rv_domain.value.,
+    "political" = table.distr_rv_domain_pol.count.,
+    "hedonism" = table.distr_rv_domain_hed.count.,
+    "revenge" = table.distr_rv_domain_rev.count.,
+    "unknown" = table.distr_rv_domain_nor.count.
+  ) %>% 
+  # Add a new row adding the last two rows together
+  add_row(
+    rowname = "5 +",
+    any = sum(any_mot_3.2[5:8, 1]),
+    political = sum(pol_mot_3.2[5:8, 1]),
+    hedonism = sum(hed_mot_3.2[5:8, 1]),
+    revenge = sum(rev_mot_3.2[5:8, 1]),
+    unknown = sum(nor_mot_3.2[5:8, 1])
+  ) %>% 
+  # Select the relevant rows and columns for plotting
+  slice(c(1:4, 9)) %>% 
+  select(- unknown)
+
+# Rearrange the data
+fig_h3.2_ds <- fig_h3.2_ds %>% 
+  pivot_longer(
+    cols = 2:5,
+    names_to = "motive",
+    values_to = "value"
+  )
+
+# Plot the data for H3.2
+fig_h3.2 <- ggplot(
+  data = fig_h3.2_ds,
+  mapping = aes(
+    x = as.character(rowname),
+    y = value,
+    group = motive,
+    fill = motive
+  ),
+) +
+  geom_col(position = "dodge") +
+  scale_y_continuous(
+    trans = "log10",
+    labels = comma
+  ) +
+  annotation_logticks(sides = "l") +
+  labs(
+    y = " ",
+    x = "times victimised by any offender") +
+  scale_fill_grey() +
+  theme_classic() +
+  theme(legend.position = c(0.8, 0.8))
+print(fig_h3.2)
+
+# Put both plots together in a plot matrix
+fig_h3 <- plot_grid(
+  fig_h3.1,
+  fig_h3.2,
+  labels = c("A", "B"),
+  vjust = 4,
+  nrow = 1
+)
+print(fig_h3)
+```
